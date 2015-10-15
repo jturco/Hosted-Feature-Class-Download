@@ -5,20 +5,21 @@ import arcpy
 # surveyName = "RoundIISurvey"
 # FeatureClass = True
 
-conn = arcpy.GetParameterAsText(3)
-surveyName = arcpy.GetParameterAsText(4)
-FeatureClass = arcpy.GetParameterAsText(5)
-CSVFile = arcpy.GetParameterAsText(6)
+
+surveyName = arcpy.GetParameterAsText(0)
+CSVFile = arcpy.GetParameterAsText(1)
 
 if FeatureClass == "false":
 	FeatureClass = False 
 elif FeatureClass == "true":
 	FeatureClass == True
 
+#FeatureClass = arcpy.GetParameterAsText(1)
+#conn = arcpy.GetParameterAsText(0)
 wksp = r'C:\Data\IOM'
 
 def  upLoadFile(file):
-	
+
 	table = wksp + "\\Temp\\CSV_To_Table.gdb\\"  + surveyName
 	xyeventlyr = table + "XY"
 	outfc = table + "FC"
@@ -43,7 +44,6 @@ def ProcessExcel(conn,table):
 		arcpy.Append_management(table, sdefc, "NO_TEST")
 
 	return
-
 
 if __name__ == '__main__':
 	table = upLoadFile(CSVFile)

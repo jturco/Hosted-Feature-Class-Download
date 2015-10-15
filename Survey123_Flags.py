@@ -1,15 +1,31 @@
 import arcpy
+import ConfigParser
+
+def ConfigSectionMap(section):
+	dict1 = {}
+	options = Config.options(section)
+	for option in options:
+		try:
+			dict1[option] = Config.get(section, option)
+			if dict1[option] == -1:
+				print "Skip: " + option
+		except:
+			print "Exception on " + option
+			dict1[option] = None 
+	return dict1
 
 # FLAGS_FC = r'C:\Data\IOM\IOM.sde\IOM.DBO.Flags'
 # surveyName = "RoundIISurvey"
-# conn = r'C:\Data\IOM\IOM.sde'
+
+configfile = r'C:\Data\IOM\Scripts\CONFIG.INI'
+####CONFIG FILE PARAMETERS##########################
+Config = ConfigParser.ConfigParser()
+Config.read(configfile)
+
+conn = ConfigSectionMap("ALL")['databaseconnection']
 
 FLAGS_FC = arcpy.GetParameterAsText(0)
 surveyName = arcpy.GetParameterAsText(1)
-conn = arcpy.GetParameterAsText(2)
-
-
-
 
 def getValues(conn):
 	arcpy.env.workspace = conn
@@ -39,6 +55,8 @@ def getValues(conn):
 			da_rows = arcpy.da.SearchCursor(fc, ["ROWID","SHAPE@XY"])
 			for da_row in da_rows:
 				if da_row[0] == rowid:
+					print da_row[1]
+					arcpy.AddMessage(da_rows[1])
 					for flag in flags:
 						#insertrow = ["FlagID", "SiteID", "SurveyID", "FlagType", "Status", "ResolutionDate", "SHAPE@XY"]
 						#insertvalues = [None, None, rowid, flag, "Open",  "null" , da_row[1]]

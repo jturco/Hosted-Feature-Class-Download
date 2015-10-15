@@ -1,29 +1,49 @@
 import os, shutil, zipfile, glob
 import urllib, urllib2, datetime, arcpy, json
+import ConfigParser, logging
 
 ##Config##
-username=arcpy.GetParameterAsText(0)
-password=arcpy.GetParameterAsText(1)
-orgurl = arcpy.GetParameterAsText(2)
-conn = arcpy.GetParameterAsText(3)
-surveyName = arcpy.GetParameterAsText(4)
+groupname = arcpy.GetParameterAsText(0)
+surveyName = arcpy.GetParameterAsText(1)
+username=arcpy.GetParameterAsText(2)
+password=arcpy.GetParameterAsText(3)
 
-wksp = r'C:\Data\IOM'
+def ConfigSectionMap(section):
+	dict1 = {}
+	options = Config.options(section)
+	for option in options:
+		try:
+			dict1[option] = Config.get(section, option)
+			if dict1[option] == -1:
+				print "Skip: " + option
+		except:
+			print "Exception on " + option
+			dict1[option] = None 
+	return dict1
 
-# username='jturco_DBS'
-# password='shannon1717'
-# wksp = r'C:\Data\IOM'
-# conn = r'C:\Data\IOM\IOM.sde'
-# CSVLocation = r'C:\Data\IOM\Temp'
+# username='username'
+# password='password'
+# groupname = "IOM Survey Group"
+# surveyName = "RoundIISurvey"
 
-#validation_survey = None
-#no_validation_survey = "BaseSurvey"
-#surveyName = "RoundIISurvey"
+configfile = r'C:\Data\IOM\Scripts\CONFIG.INI'
+####CONFIG FILE PARAMETERS##########################
+Config = ConfigParser.ConfigParser()
+Config.read(configfile)
 
+conn = ConfigSectionMap("ALL")['databaseconnection']
+wksp = ConfigSectionMap("ALL")['workspace']
+orgurl = ConfigSectionMap("ALL")['orgurl']
+logfile = ConfigSectionMap("ALL")['logfile']
+
+logging.basicConfig(filename=logfile + "CreateSchemaLog.log", level=logging.DEBUG)
 
 def getToken(username, password):
-	print "Getting Token for Organization Account..."
+	'''Gets a token from the ArcGIS Online or Portal Account'''
+	'''Organization URL is specified in the Config.ini file'''
+
 	arcpy.AddMessage("Getting Token for Organization Account...")
+	logging.debug("Getting Token for Organization Account...")
 	gtUrl = 'https://www.arcgis.com/sharing/rest/generateToken'
 	gtValues = {'username' : username,
 	'password' : password,
@@ -34,20 +54,20 @@ def getToken(username, password):
 	gtResponse = urllib2.urlopen(gtRequest)
 	gtJson = json.load(gtResponse)
 	token = gtJson['token']
-	print "Successfully received token..."
+	logging.debug("Successfully received token: " + token)
 	arcpy.AddMessage("Successfully received token...")
+	
 	return token
 
-def getItems(token):
+def getItemsGroup(token):
 	'''Find the Item based on the Survey Name'''
 	'''This is already built to handle multiple names'''
 
-	print "Finding Survey in ArcGIS Online/Portal..."
-	arcpy.AddMessage("Finding Survey in ArcGIS Online/Portal...")
+	print "Finding Survey in Group " + groupname
+	arcpy.AddMessage("Finding Survey in Group " + groupname)
 
 	itemdict = {}
-	#orgurl = 'https://www.arcgis.com'
-	gtUrl = orgurl +'/sharing/rest/content/users/' + username
+	gtUrl = 'http://www.arcgis.com/sharing/rest/community/self'
 	gtValues = {'token' : token ,
 	'referer' : 'http://www.arcgis.com',
 	'f' : 'json'}
@@ -57,30 +77,35 @@ def getItems(token):
 	parsed_json = json.load(gtResponse)
 	gtResponse.close()
 
-	#Need to learn how to handle this with new validation entries
+	groups = parsed_json['groups']
+	
+	#get the groupid
+	for group in groups:
+		print group['title']
+		if group['title'] == groupname:
+			print group['id']
+			groupid = group['id']
+
+	gtUrl = orgurl + '/sharing/rest/content/groups/' + groupid
+	gtValues = {'token' : token ,
+	'referer' : 'http://www.arcgis.com',
+	'f' : 'json'}
+	gtData = urllib.urlencode(gtValues)
+	gtRequest = urllib2.Request(gtUrl, gtData)
+	gtResponse = urllib2.urlopen(gtRequest)
+	parsed_json = json.load(gtResponse)
+	gtResponse.close()
+
 	items = parsed_json['items']
+
+	arcpy.AddMessage("Searching Group for: " + surveyName)
+	
 	for item in items:
 		if item['type'] == "Feature Service" and item['title'] == surveyName:
-			print item['title']
+			arcpy.AddMessage("Fround Hosted Feature Service: " + item['title'])
 			itemid = item['id']
 			itemurl = item['url']
 			itemdict[itemid] = itemurl
-
-	folders = parsed_json['folders']
-	for items in folders:
-		folderID = items['id']
-		folderURL = 'https://www.arcgis.com/sharing/rest/content/users/' + username + '/' + folderID
-		gtData = urllib.urlencode(gtValues)
-		gtRequest = urllib2.Request(folderURL, gtData)
-		folderREQ = urllib2.urlopen(gtRequest)
-		folderItems = json.load(folderREQ)
-		newitems = folderItems['items']
-		for item in newitems:
-			if item['type'] == "Feature Service" and item['title'] == surveyName:
-				print item['title']
-				itemid = item['id']
-				itemurl = item['url']	
-				itemdict[itemid] = itemurl
 
 	print "Hosted Feature Servicce URL: " + itemurl
 	arcpy.AddMessage("Hosted Feature Servicce URL: " + itemurl)
@@ -116,13 +141,7 @@ def getItems(token):
 	return itemdict, layers, lyrQueryList
 
 def getReplica(token, itemdict, layers, layerQueries):
-	print itemdict
-	#Base Survey
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/ArcGIS/rest/services/service_4358578960b84c41bfbeb086294976b0/FeatureServer/CreateReplica'
-	#InitialSurveyV3 shared to group
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/arcgis/rest/services/service_c459498bbffc4a1cb58c3e4501fc76c7/FeatureServer/CreateReplica'
-	#Deepti's RoundIISurvey
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/arcgis/rest/services/service_e0e0cde7356549138e6b82d078b3b5c0/FeatureServer/CreateReplica'
+
 	crUrl = itemdict.itervalues().next() + '/CreateReplica'
 	crValues = {
 	'f' : 'json',
@@ -148,25 +167,22 @@ def getReplica(token, itemdict, layers, layerQueries):
 
 def TrimFields(table):
 
-	print "Trimming field over 28 characters for: " + table
-	arcpy.AddMessage("Trimming field over 28 characters for: " + table)
+	print "Trimming fields for: " + table
+	arcpy.AddMessage("Trimming fields for: " + table)
 	fields = arcpy.ListFields(table)
 
 	for field in fields:
 		if len(field.name) > 30:
 			trim_amount = len(field.name) - 30
-			#Find a more elegant way to do this?
 			trimmed_name = "F" + field.name[:-trim_amount]
 			arcpy.AlterField_management(table, field.name, trimmed_name)
 		elif field.name == "end":
-			print "Founnd...End"
 			new_name = field.name + "_"
 			arcpy.AlterField_management(table, field.name, new_name)
 		elif field.name.startswith("_"):
-			print "Found Starts With _ "
+			#Hanndles the F appending needed by database for fields that start with underscores
 			new_name = "F" + field.name
 			arcpy.AlterField_management(table, field.name, new_name)
-
 	return
 
 def ProcessReplica(conn):
@@ -201,6 +217,8 @@ def ProcessReplica(conn):
 				else:
 					print "Table already exists in database"
 					arcpy.AddMessage("Table already exists in database")
+					#handle table here
+
 			arcpy.Copy_management(fc, conn + "\\" + fc)
 		else:
 			print "Survey already exists in database"
@@ -208,13 +226,13 @@ def ProcessReplica(conn):
 	return
 
 if __name__ == '__main__':
-
+	logging.debug("Starting script...")
 	#Delete\Recreate Temp Directory
 	shutil.rmtree(wksp + "\\Temp\\")
 	os.makedirs(wksp + "\\Temp\\")
 
 	token = getToken(username, password)
-	itemdict, layers, layerQueries = getItems(token)
+	itemdict, layers, layerQueries = getItemsGroup(token)
 	getReplica(token, itemdict, layers, layerQueries)
 
 	ProcessReplica(conn)

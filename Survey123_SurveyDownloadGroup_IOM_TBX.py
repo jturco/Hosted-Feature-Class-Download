@@ -1,36 +1,62 @@
 import os, shutil, zipfile, glob
 import urllib, urllib2, datetime, arcpy, json
+import ConfigParser
 
 ##Config##
-username=arcpy.GetParameterAsText(0)
-password=arcpy.GetParameterAsText(1)
-orgurl = arcpy.GetParameterAsText(2)
-conn = arcpy.GetParameterAsText(3)
-surveyName = arcpy.GetParameterAsText(4)
-validation = arcpy.GetParameterAsText(5)
-CSVLocation = arcpy.GetParameterAsText(6)
+groupname=arcpy.GetParameterAsText(0)
+surveyName=arcpy.GetParameterAsText(1)
+username=arcpy.GetParameterAsText(2)
+password=arcpy.GetParameterAsText(3)
+validation = arcpy.GetParameterAsText(4)
+CSVLocation = arcpy.GetParameterAsText(5)
+
+
+def ConfigSectionMap(section):
+	dict1 = {}
+	options = Config.options(section)
+	for option in options:
+		try:
+			dict1[option] = Config.get(section, option)
+			if dict1[option] == -1:
+				print "Skip: " + option
+		except:
+			print "Exception on " + option
+			dict1[option] = None 
+	return dict1
+
+
+configfile = r'C:\Data\IOM\Scripts\CONFIG.INI'
+####CONFIG FILE PARAMETERS##########################
+Config = ConfigParser.ConfigParser()
+Config.read(configfile)
+
+conn = ConfigSectionMap("ALL")['databaseconnection']
+wksp = ConfigSectionMap("ALL")['workspace']
+orgurl = ConfigSectionMap("ALL")['orgurl']
+logfile = ConfigSectionMap("ALL")['logfile']
 
 if validation == "false":
 	validation = False 
 elif validation == "true":
 	validation == True
 
-wksp = r'C:\Data\IOM'
-
-# username='jturco_DBS'
-# password='shannon1717'
-# wksp = r'C:\Data\IOM'
-# conn = r'C:\Data\IOM\IOM.sde'
+# username='username'
+# password='password'
+# groupname = "IOM Survey Group"
 # CSVLocation = r'C:\Data\IOM\Temp'
+# validation = False
+# surveyName = "RoundIISurvey"
 
-#validation_survey = None
-#no_validation_survey = "BaseSurvey"
-#surveyName = "RoundIISurvey"
+
+logging.basicConfig(filename=logfile + "CreateSchemaLog.log", level=logging.DEBUG)
 
 
 def getToken(username, password):
-	print "Getting Token for Organization Account..."
+	'''Gets a token from the ArcGIS Online or Portal Account'''
+	'''Organization URL is specified in the Config.ini file'''
+
 	arcpy.AddMessage("Getting Token for Organization Account...")
+	logging.debug("Getting Token for Organization Account...")
 	gtUrl = 'https://www.arcgis.com/sharing/rest/generateToken'
 	gtValues = {'username' : username,
 	'password' : password,
@@ -41,12 +67,12 @@ def getToken(username, password):
 	gtResponse = urllib2.urlopen(gtRequest)
 	gtJson = json.load(gtResponse)
 	token = gtJson['token']
-	print "Successfully received token..."
+	logging.debug("Successfully received token: " + token)
 	arcpy.AddMessage("Successfully received token...")
+	
 	return token
 
-
-def getItems(token):
+def getItemsGroup(token):
 	'''Find the Item based on the Survey Name'''
 	'''This is already built to handle multiple names'''
 
@@ -54,8 +80,7 @@ def getItems(token):
 	arcpy.AddMessage("Finding Survey in ArcGIS Online/Portal...")
 
 	itemdict = {}
-	#orgurl = 'https://www.arcgis.com'
-	gtUrl = orgurl +'/sharing/rest/content/users/' + username
+	gtUrl = 'http://www.arcgis.com/sharing/rest/community/self'
 	gtValues = {'token' : token ,
 	'referer' : 'http://www.arcgis.com',
 	'f' : 'json'}
@@ -65,30 +90,33 @@ def getItems(token):
 	parsed_json = json.load(gtResponse)
 	gtResponse.close()
 
-	#Need to learn how to handle this with new validation entries
+	groups = parsed_json['groups']
+	
+	#get the groupid
+	for group in groups:
+		print group['title']
+		if group['title'] == groupname:
+			print group['id']
+			groupid = group['id']
+
+	gtUrl = orgurl + '/sharing/rest/content/groups/' + groupid
+	gtValues = {'token' : token ,
+	'referer' : 'http://www.arcgis.com',
+	'f' : 'json'}
+	gtData = urllib.urlencode(gtValues)
+	gtRequest = urllib2.Request(gtUrl, gtData)
+	gtResponse = urllib2.urlopen(gtRequest)
+	parsed_json = json.load(gtResponse)
+	gtResponse.close()
+
 	items = parsed_json['items']
+	
 	for item in items:
 		if item['type'] == "Feature Service" and item['title'] == surveyName:
 			print item['title']
 			itemid = item['id']
 			itemurl = item['url']
 			itemdict[itemid] = itemurl
-
-	folders = parsed_json['folders']
-	for items in folders:
-		folderID = items['id']
-		folderURL = 'https://www.arcgis.com/sharing/rest/content/users/' + username + '/' + folderID
-		gtData = urllib.urlencode(gtValues)
-		gtRequest = urllib2.Request(folderURL, gtData)
-		folderREQ = urllib2.urlopen(gtRequest)
-		folderItems = json.load(folderREQ)
-		newitems = folderItems['items']
-		for item in newitems:
-			if item['type'] == "Feature Service" and item['title'] == surveyName:
-				print item['title']
-				itemid = item['id']
-				itemurl = item['url']	
-				itemdict[itemid] = itemurl
 
 	print "Hosted Feature Servicce URL: " + itemurl
 	arcpy.AddMessage("Hosted Feature Servicce URL: " + itemurl)
@@ -108,29 +136,28 @@ def getItems(token):
 	arcpy.AddMessage("Found " + str(len(layers)) + " layers, and " + str(len(tables)) + " tables.")
 
 	lyrlist =  []
+	lyrQueryList = []
 	num = 0
 	while numlayers > 0:
 		lyrlist.append(str(num))
+		lyrQueryList.append('"' +str(num)+ '":{"queryOption":"all"}')
 		num += 1
 		numlayers -= 1
 	layers = ','.join(lyrlist)
+	lyrQueryList = ",".join(lyrQueryList)
+	lyrQueryList = "{" + lyrQueryList + "}"
+	arcpy.AddMessage(lyrQueryList)
 
 	serviceREQ.close()
-	return itemdict, layers
+	return itemdict, layers, lyrQueryList
 
-def getReplica(token, itemdict, layers):
-	print itemdict
-	#Base Survey
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/ArcGIS/rest/services/service_4358578960b84c41bfbeb086294976b0/FeatureServer/CreateReplica'
-	#InitialSurveyV3 shared to group
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/arcgis/rest/services/service_c459498bbffc4a1cb58c3e4501fc76c7/FeatureServer/CreateReplica'
-	#Deepti's RoundIISurvey
-	#crUrl = 'http://services1.arcgis.com/g2TonOxuRkIqSOFx/arcgis/rest/services/service_e0e0cde7356549138e6b82d078b3b5c0/FeatureServer/CreateReplica'
+def getReplica(token, itemdict, layers, layerQueries):
+	
 	crUrl = itemdict.itervalues().next() + '/CreateReplica'
 	crValues = {
 	'f' : 'json',
 	'layers' : layers,
-	'layerQueries' : '{"0":{"queryOption": "all"}, "1":{"queryOption": "all"}, "2":{"queryOption":"all"}}',
+	'layerQueries' : layerQueries,
 	'returnAttachments' : 'false',
 	'syncModel' : 'none',
 	'dataFormat': 'filegdb',
@@ -169,7 +196,6 @@ def TrimFields(table):
 			print "Found Starts With _ "
 			new_name = "F" + field.name
 			arcpy.AlterField_management(table, field.name, new_name)
-
 	return
 
 def getExistingRecords(table):
@@ -273,7 +299,6 @@ def ProcessReplica(conn):
 				#have to find how to handle this
 	return
 
-
 if __name__ == '__main__':
 
 	#Delete\Recreate Temp Directory
@@ -281,8 +306,8 @@ if __name__ == '__main__':
 	os.makedirs(wksp + "\\Temp\\")
 
 	token = getToken(username, password)
-	itemdict, layers = getItems(token)
-	getReplica(token, itemdict, layers)
+	itemdict, layers, layerQueries = getItemsGroup(token)
+	getReplica(token, itemdict, layers, layerQueries)
 
 	ProcessReplica(conn)
 	
